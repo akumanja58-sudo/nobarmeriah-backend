@@ -7,7 +7,7 @@
  * 2. Get semua prediksi untuk match tersebut
  * 3. Compare prediksi vs hasil asli
  * 4. Kasih poin ke user
- * 5. Update streak
+ * 5. Update streak (PER MATCH, bukan per prediksi)
  */
 
 const { createClient } = require('@supabase/supabase-js');
@@ -37,7 +37,7 @@ const BIG_LEAGUES = [
  */
 const isBigMatch = (leagueName) => {
     if (!leagueName) return false;
-    return BIG_LEAGUES.some(league => 
+    return BIG_LEAGUES.some(league =>
         leagueName.toLowerCase().includes(league.toLowerCase())
     );
 };
@@ -47,15 +47,15 @@ const isBigMatch = (leagueName) => {
  */
 const calculatePoints = (predictionType, isCorrect, leagueName) => {
     if (!isCorrect) return 0;
-    
+
     const isBig = isBigMatch(leagueName);
-    
+
     if (predictionType === 'winner') {
         return isBig ? 15 : 10;
     } else if (predictionType === 'score') {
         return isBig ? 25 : 20;
     }
-    
+
     return 0;
 };
 
@@ -109,7 +109,7 @@ const getFinishedMatchesToGrade = async () => {
 const getMatchResult = async (matchId) => {
     try {
         const result = await apiFootball.getMatchById(matchId);
-        
+
         if (!result.success || !result.data || result.data.length === 0) {
             return null;
         }
@@ -154,6 +154,7 @@ const getMatchResult = async (matchId) => {
 
 /**
  * Grade winner predictions untuk satu match
+ * Returns: { graded, correct, userResults: { email: { points, isCorrect } } }
  */
 const gradeWinnerPredictions = async (matchId, matchResult) => {
     try {
@@ -165,11 +166,12 @@ const gradeWinnerPredictions = async (matchId, matchResult) => {
             .eq('status', 'pending');
 
         if (error || !predictions || predictions.length === 0) {
-            return { graded: 0, correct: 0 };
+            return { graded: 0, correct: 0, userResults: {} };
         }
 
         let gradedCount = 0;
         let correctCount = 0;
+        const userResults = {};
 
         for (const prediction of predictions) {
             const isCorrect = prediction.predicted_result === matchResult.winner;
@@ -192,26 +194,26 @@ const gradeWinnerPredictions = async (matchId, matchResult) => {
                 continue;
             }
 
-            // Update user points & streak
-            if (isCorrect) {
-                await updateUserStats(prediction.email, pointsEarned, true);
-                correctCount++;
-            } else {
-                await updateUserStats(prediction.email, 0, false);
-            }
+            // Store user result for later streak calculation
+            userResults[prediction.email] = {
+                points: pointsEarned,
+                isCorrect: isCorrect
+            };
 
+            if (isCorrect) correctCount++;
             gradedCount++;
         }
 
-        return { graded: gradedCount, correct: correctCount };
+        return { graded: gradedCount, correct: correctCount, userResults };
     } catch (error) {
         console.error('Error grading winner predictions:', error);
-        return { graded: 0, correct: 0 };
+        return { graded: 0, correct: 0, userResults: {} };
     }
 };
 
 /**
  * Grade score predictions untuk satu match
+ * Returns: { graded, correct, userResults: { email: { points, isCorrect } } }
  */
 const gradeScorePredictions = async (matchId, matchResult) => {
     try {
@@ -223,17 +225,18 @@ const gradeScorePredictions = async (matchId, matchResult) => {
             .eq('status', 'pending');
 
         if (error || !predictions || predictions.length === 0) {
-            return { graded: 0, correct: 0 };
+            return { graded: 0, correct: 0, userResults: {} };
         }
 
         let gradedCount = 0;
         let correctCount = 0;
+        const userResults = {};
 
         for (const prediction of predictions) {
-            const isCorrect = 
+            const isCorrect =
                 prediction.predicted_home_score === matchResult.homeScore &&
                 prediction.predicted_away_score === matchResult.awayScore;
-            
+
             const pointsEarned = calculatePoints('score', isCorrect, matchResult.leagueName);
 
             // Update prediction status
@@ -254,29 +257,41 @@ const gradeScorePredictions = async (matchId, matchResult) => {
                 continue;
             }
 
-            // Update user points & streak
-            if (isCorrect) {
-                await updateUserStats(prediction.email, pointsEarned, true);
-                correctCount++;
-            } else {
-                await updateUserStats(prediction.email, 0, false);
-            }
+            // Store user result for later streak calculation
+            userResults[prediction.email] = {
+                points: pointsEarned,
+                isCorrect: isCorrect
+            };
 
+            if (isCorrect) correctCount++;
             gradedCount++;
         }
 
-        return { graded: gradedCount, correct: correctCount };
+        return { graded: gradedCount, correct: correctCount, userResults };
     } catch (error) {
         console.error('Error grading score predictions:', error);
-        return { graded: 0, correct: 0 };
+        return { graded: 0, correct: 0, userResults: {} };
     }
 };
 
 /**
- * Update user stats (points, streak, etc)
+ * Update user stats PER MATCH (combined winner + score)
+ * Streak dihitung berdasarkan: ada minimal 1 prediksi benar di match ini
  */
-const updateUserStats = async (email, pointsEarned, isCorrect) => {
+const updateUserStatsPerMatch = async (email, winnerResult, scoreResult) => {
     try {
+        // Calculate total points from this match
+        const winnerPoints = winnerResult?.points || 0;
+        const scorePoints = scoreResult?.points || 0;
+        const totalPoints = winnerPoints + scorePoints;
+
+        // Determine if user got ANY prediction correct in this match (for streak)
+        const hasCorrectPrediction = (winnerResult?.isCorrect === true) || (scoreResult?.isCorrect === true);
+
+        // Count predictions made
+        const predictionsMade = (winnerResult ? 1 : 0) + (scoreResult ? 1 : 0);
+        const correctPredictions = (winnerResult?.isCorrect ? 1 : 0) + (scoreResult?.isCorrect ? 1 : 0);
+
         // Get current user stats
         const { data: profile, error: fetchError } = await supabase
             .from('profiles')
@@ -289,22 +304,28 @@ const updateUserStats = async (email, pointsEarned, isCorrect) => {
             return;
         }
 
-        // Calculate new values
-        let newStreak = isCorrect ? (profile.current_streak || 0) + 1 : 0;
+        // Calculate new streak (based on match, not individual predictions)
+        let newStreak = hasCorrectPrediction ? (profile.current_streak || 0) + 1 : 0;
         let newBestStreak = Math.max(newStreak, profile.best_streak || 0);
-        
+
         // Calculate streak bonus (only when reaching milestones)
         let streakBonus = 0;
-        if (isCorrect) {
+        if (hasCorrectPrediction) {
             const oldStreak = profile.current_streak || 0;
             // Give bonus when reaching 3, 5, or 10
-            if (newStreak === 3 || newStreak === 5 || newStreak === 10) {
-                streakBonus = calculateStreakBonus(newStreak);
-                console.log(`🔥 Streak bonus! ${email} reached ${newStreak} streak, +${streakBonus} bonus`);
+            if (newStreak === 3 && oldStreak < 3) {
+                streakBonus = 5;
+                console.log(`🔥 Streak bonus! ${email} reached 3 streak, +5 bonus`);
+            } else if (newStreak === 5 && oldStreak < 5) {
+                streakBonus = 10;
+                console.log(`🔥 Streak bonus! ${email} reached 5 streak, +10 bonus`);
+            } else if (newStreak === 10 && oldStreak < 10) {
+                streakBonus = 25;
+                console.log(`🔥 Streak bonus! ${email} reached 10 streak, +25 bonus`);
             }
         }
 
-        const totalPointsEarned = pointsEarned + streakBonus;
+        const totalPointsEarned = totalPoints + streakBonus;
 
         // Update profile
         const { error: updateError } = await supabase
@@ -314,8 +335,8 @@ const updateUserStats = async (email, pointsEarned, isCorrect) => {
                 season_points: (profile.season_points || 0) + totalPointsEarned,
                 current_streak: newStreak,
                 best_streak: newBestStreak,
-                correct_predictions: (profile.correct_predictions || 0) + (isCorrect ? 1 : 0),
-                total_predictions: (profile.total_predictions || 0) + 1
+                correct_predictions: (profile.correct_predictions || 0) + correctPredictions,
+                total_predictions: (profile.total_predictions || 0) + predictionsMade
             })
             .eq('email', email);
 
@@ -324,14 +345,17 @@ const updateUserStats = async (email, pointsEarned, isCorrect) => {
             return;
         }
 
+        // Log result
         if (totalPointsEarned > 0) {
-            console.log(`✅ ${email}: +${pointsEarned} pts${streakBonus > 0 ? ` (+${streakBonus} streak bonus)` : ''}, streak: ${newStreak}`);
+            console.log(`✅ ${email}: +${totalPoints} pts${streakBonus > 0 ? ` (+${streakBonus} streak bonus)` : ''}, streak: ${newStreak}`);
+        } else if (hasCorrectPrediction) {
+            console.log(`✅ ${email}: correct but 0 pts, streak: ${newStreak}`);
         } else {
-            console.log(`❌ ${email}: wrong prediction, streak reset`);
+            console.log(`❌ ${email}: wrong predictions, streak reset to 0`);
         }
 
     } catch (error) {
-        console.error('Error in updateUserStats:', error);
+        console.error('Error in updateUserStatsPerMatch:', error);
     }
 };
 
@@ -340,11 +364,11 @@ const updateUserStats = async (email, pointsEarned, isCorrect) => {
  */
 const gradeAllPendingPredictions = async () => {
     console.log('\n🎯 Starting grading process...');
-    
+
     try {
         // Get match IDs with pending predictions
         const matchIds = await getFinishedMatchesToGrade();
-        
+
         if (matchIds.length === 0) {
             console.log('📝 No pending predictions to grade');
             return { success: true, graded: 0 };
@@ -358,7 +382,7 @@ const gradeAllPendingPredictions = async () => {
         for (const matchId of matchIds) {
             // Get match result from API
             const matchResult = await getMatchResult(matchId);
-            
+
             if (!matchResult) {
                 console.log(`⏳ Match ${matchId} not finished yet, skipping...`);
                 continue;
@@ -366,13 +390,28 @@ const gradeAllPendingPredictions = async () => {
 
             console.log(`\n⚽ Grading match: ${matchResult.homeTeam} ${matchResult.homeScore}-${matchResult.awayScore} ${matchResult.awayTeam}`);
 
-            // Grade winner predictions
+            // Grade winner predictions (don't update user stats yet)
             const winnerResults = await gradeWinnerPredictions(matchId, matchResult);
             console.log(`   Winner predictions: ${winnerResults.graded} graded, ${winnerResults.correct} correct`);
 
-            // Grade score predictions
+            // Grade score predictions (don't update user stats yet)
             const scoreResults = await gradeScorePredictions(matchId, matchResult);
             console.log(`   Score predictions: ${scoreResults.graded} graded, ${scoreResults.correct} correct`);
+
+            // Now update user stats PER MATCH (combining winner + score results)
+            // Get all unique emails from both results
+            const allEmails = new Set([
+                ...Object.keys(winnerResults.userResults),
+                ...Object.keys(scoreResults.userResults)
+            ]);
+
+            for (const email of allEmails) {
+                await updateUserStatsPerMatch(
+                    email,
+                    winnerResults.userResults[email] || null,
+                    scoreResults.userResults[email] || null
+                );
+            }
 
             totalGraded += winnerResults.graded + scoreResults.graded;
             totalCorrect += winnerResults.correct + scoreResults.correct;
@@ -382,7 +421,7 @@ const gradeAllPendingPredictions = async () => {
         }
 
         console.log(`\n✅ Grading complete! Total: ${totalGraded} predictions graded, ${totalCorrect} correct`);
-        
+
         return {
             success: true,
             graded: totalGraded,
@@ -403,15 +442,30 @@ const gradeAllPendingPredictions = async () => {
  */
 const gradeMatch = async (matchId) => {
     console.log(`\n🎯 Manual grading for match ${matchId}...`);
-    
+
     const matchResult = await getMatchResult(matchId);
-    
+
     if (!matchResult) {
         return { success: false, error: 'Match not finished or not found' };
     }
 
+    // Grade predictions
     const winnerResults = await gradeWinnerPredictions(matchId, matchResult);
     const scoreResults = await gradeScorePredictions(matchId, matchResult);
+
+    // Update user stats per match
+    const allEmails = new Set([
+        ...Object.keys(winnerResults.userResults),
+        ...Object.keys(scoreResults.userResults)
+    ]);
+
+    for (const email of allEmails) {
+        await updateUserStatsPerMatch(
+            email,
+            winnerResults.userResults[email] || null,
+            scoreResults.userResults[email] || null
+        );
+    }
 
     return {
         success: true,
