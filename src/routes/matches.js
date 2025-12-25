@@ -69,18 +69,88 @@ router.get('/', async (req, res) => {
         // Transform data ke format yang clean
         const matches = matchSync.transformMatches(result.data);
 
-        // Sort: LIVE first, then by kickoff time
+        // League Tier Priority (lower = more important)
+        const TIER_1_LEAGUES = [
+            // Top 5 Leagues
+            'Premier League',
+            'La Liga',
+            'Serie A',
+            'Bundesliga',
+            'Ligue 1',
+            // European Competitions
+            'UEFA Champions League',
+            'Champions League',
+            'UEFA Europa League',
+            'Europa League',
+            'UEFA Europa Conference League',
+            'Conference League',
+            // International
+            'World Cup',
+            'UEFA Euro',
+            'Euro Championship',
+            'Copa America',
+            'AFC Asian Cup',
+            // Indonesia
+            'Liga 1',
+            'BRI Liga 1'
+        ];
+
+        const TIER_2_LEAGUES = [
+            'Eredivisie',
+            'Primeira Liga',
+            'Liga Portugal',
+            'Belgian Pro League',
+            'Scottish Premiership',
+            'Championship',
+            'Liga 2',
+            'Serie B',
+            'La Liga 2',
+            '2. Bundesliga',
+            'Ligue 2',
+            'MLS',
+            'Saudi Pro League',
+            'Super Lig'
+        ];
+
+        // Function to get league tier
+        const getLeagueTier = (leagueName) => {
+            if (!leagueName) return 99;
+            const name = leagueName.toLowerCase();
+
+            // Check TIER 1
+            for (const league of TIER_1_LEAGUES) {
+                if (name.includes(league.toLowerCase())) return 1;
+            }
+
+            // Check TIER 2
+            for (const league of TIER_2_LEAGUES) {
+                if (name.includes(league.toLowerCase())) return 2;
+            }
+
+            // Default tier
+            return 3;
+        };
+
+        // Sort: LIVE first, then by tier, then by kickoff time
         matches.sort((a, b) => {
             const aLive = a.is_live || ['1H', '2H', 'HT', 'ET', 'BT', 'P'].includes(a.status_short);
             const bLive = b.is_live || ['1H', '2H', 'HT', 'ET', 'BT', 'P'].includes(b.status_short);
 
-            // LIVE matches first
+            // 1. LIVE matches first
             if (aLive && !bLive) return -1;
             if (!aLive && bLive) return 1;
 
-            // Then by kickoff time
+            // 2. If both LIVE or both not LIVE, sort by tier
+            const aTier = getLeagueTier(a.league_name);
+            const bTier = getLeagueTier(b.league_name);
+
+            if (aTier !== bTier) return aTier - bTier;
+
+            // 3. Same tier, sort by kickoff time
             return new Date(a.date) - new Date(b.date);
         });
+
+        console.log('📊 Sorted matches by: LIVE → Tier → Kickoff time');
 
         // Group by league
         const groupedByLeague = matches.reduce((acc, match) => {
