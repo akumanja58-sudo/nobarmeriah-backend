@@ -5,14 +5,14 @@ const matchSync = require('../services/matchSync');
 
 /**
  * GET /api/matches
- * Get all matches (today by default)
+ * Get all matches (today + live by default)
  */
 router.get('/', async (req, res) => {
     try {
         const { date, league, live } = req.query;
-        
+
         let result;
-        
+
         if (live === 'true') {
             // Get live matches only
             result = await apiFootball.getLiveMatches();
@@ -23,8 +23,40 @@ router.get('/', async (req, res) => {
             // Get matches by league
             result = await apiFootball.getMatchesByLeague(league);
         } else {
-            // Default: get today's matches
-            result = await apiFootball.getTodayMatches();
+            // Default: get today's matches + any LIVE matches (including from yesterday)
+            console.log('📅 Fetching today matches + live matches...');
+
+            // Fetch both in parallel
+            const [todayResult, liveResult] = await Promise.all([
+                apiFootball.getTodayMatches(),
+                apiFootball.getLiveMatches()
+            ]);
+
+            // Combine results
+            const todayMatches = todayResult.success ? todayResult.data : [];
+            const liveMatches = liveResult.success ? liveResult.data : [];
+
+            // Merge and deduplicate by fixture ID
+            const matchMap = new Map();
+
+            // Add today's matches first
+            for (const match of todayMatches) {
+                matchMap.set(match.fixture.id, match);
+            }
+
+            // Add/update with live matches (live data is more current)
+            for (const match of liveMatches) {
+                matchMap.set(match.fixture.id, match);
+            }
+
+            const combinedMatches = Array.from(matchMap.values());
+
+            console.log(`✅ Combined: ${todayMatches.length} today + ${liveMatches.length} live = ${combinedMatches.length} unique matches`);
+
+            result = {
+                success: true,
+                data: combinedMatches
+            };
         }
 
         if (!result.success) {
@@ -36,6 +68,19 @@ router.get('/', async (req, res) => {
 
         // Transform data ke format yang clean
         const matches = matchSync.transformMatches(result.data);
+
+        // Sort: LIVE first, then by kickoff time
+        matches.sort((a, b) => {
+            const aLive = a.is_live || ['1H', '2H', 'HT', 'ET', 'BT', 'P'].includes(a.status_short);
+            const bLive = b.is_live || ['1H', '2H', 'HT', 'ET', 'BT', 'P'].includes(b.status_short);
+
+            // LIVE matches first
+            if (aLive && !bLive) return -1;
+            if (!aLive && bLive) return 1;
+
+            // Then by kickoff time
+            return new Date(a.date) - new Date(b.date);
+        });
 
         // Group by league
         const groupedByLeague = matches.reduce((acc, match) => {
@@ -213,7 +258,7 @@ router.get('/league/:leagueId', async (req, res) => {
         const { date, season } = req.query;
 
         let result;
-        
+
         if (date) {
             result = await apiFootball.getFixtures({
                 league: leagueId,
