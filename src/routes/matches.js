@@ -2,6 +2,184 @@ const express = require('express');
 const router = express.Router();
 const apiFootball = require('../services/apiFootball');
 const matchSync = require('../services/matchSync');
+const { supabase } = require('../config/database');
+
+/**
+ * GET /api/matches/archived
+ * Get archived/finished matches from database
+ */
+router.get('/archived', async (req, res) => {
+    try {
+        const { limit = 20, offset = 0, league, date_from, date_to } = req.query;
+
+        if (!supabase) {
+            return res.status(500).json({
+                success: false,
+                error: 'Database not configured'
+            });
+        }
+
+        // Build query for finished matches
+        let query = supabase
+            .from('matches')
+            .select('*')
+            .in('status_short', ['FT', 'AET', 'PEN', 'AWD', 'WO']) // Finished statuses
+            .order('date', { ascending: false })
+            .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
+
+        // Optional filters
+        if (league) {
+            query = query.eq('league_id', parseInt(league));
+        }
+
+        if (date_from) {
+            query = query.gte('date', date_from);
+        }
+
+        if (date_to) {
+            query = query.lte('date', date_to);
+        }
+
+        const { data, error, count } = await query;
+
+        if (error) {
+            console.error('❌ Archive query error:', error);
+            return res.status(500).json({
+                success: false,
+                error: error.message
+            });
+        }
+
+        // Transform to frontend format
+        const matches = (data || []).map(match => ({
+            id: match.id,
+            fixture_id: match.id,
+            date: match.date,
+            match_date: match.date,
+            local_date: new Date(match.date).toLocaleDateString('id-ID', {
+                weekday: 'long',
+                day: 'numeric',
+                month: 'long',
+                year: 'numeric'
+            }),
+            kickoff_date: match.date,
+            timestamp: match.timestamp,
+            venue: match.venue,
+            venue_city: match.venue_city,
+            status: match.status,
+            status_short: match.status_short,
+            status_long: match.status_long,
+            elapsed: match.elapsed,
+            is_live: false,
+            is_finished: true,
+            league_id: match.league_id,
+            league_name: match.league_name,
+            league_country: match.league_country,
+            league_logo: match.league_logo,
+            league_flag: match.league_flag,
+            league_round: match.league_round,
+            home_team_id: match.home_team_id,
+            home_team: match.home_team_name,
+            home_team_name: match.home_team_name,
+            home_team_logo: match.home_team_logo,
+            home_logo: match.home_team_logo,
+            away_team_id: match.away_team_id,
+            away_team: match.away_team_name,
+            away_team_name: match.away_team_name,
+            away_team_logo: match.away_team_logo,
+            away_logo: match.away_team_logo,
+            home_score: match.home_score,
+            away_score: match.away_score,
+            ht_home: match.ht_home,
+            ht_away: match.ht_away,
+            ft_home: match.ft_home,
+            ft_away: match.ft_away,
+            source: 'database'
+        }));
+
+        console.log(`📦 Archive: Found ${matches.length} finished matches`);
+
+        res.json({
+            success: true,
+            data: {
+                matches: matches,
+                total: matches.length,
+                offset: parseInt(offset),
+                limit: parseInt(limit),
+                hasMore: matches.length === parseInt(limit)
+            },
+            lastUpdated: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('❌ Archive error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/matches/archived/stats
+ * Get archive statistics
+ */
+router.get('/archived/stats', async (req, res) => {
+    try {
+        if (!supabase) {
+            return res.status(500).json({
+                success: false,
+                error: 'Database not configured'
+            });
+        }
+
+        // Get archived count (finished matches)
+        const { count: archivedCount, error: archivedError } = await supabase
+            .from('matches')
+            .select('*', { count: 'exact', head: true })
+            .in('status_short', ['FT', 'AET', 'PEN', 'AWD', 'WO']);
+
+        // Get active count (not finished)
+        const { count: activeCount, error: activeError } = await supabase
+            .from('matches')
+            .select('*', { count: 'exact', head: true })
+            .not('status_short', 'in', '("FT","AET","PEN","AWD","WO")');
+
+        // Get total count
+        const { count: totalCount, error: totalError } = await supabase
+            .from('matches')
+            .select('*', { count: 'exact', head: true });
+
+        if (archivedError || activeError || totalError) {
+            console.error('❌ Stats query error:', archivedError || activeError || totalError);
+            return res.status(500).json({
+                success: false,
+                error: 'Failed to fetch stats'
+            });
+        }
+
+        const stats = {
+            archived_matches: archivedCount || 0,
+            active_matches: activeCount || 0,
+            total_matches: totalCount || 0
+        };
+
+        console.log(`📊 Archive stats:`, stats);
+
+        res.json({
+            success: true,
+            stats: stats,
+            lastUpdated: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('❌ Stats error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
 
 /**
  * GET /api/matches
