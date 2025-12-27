@@ -330,11 +330,11 @@ router.get('/', async (req, res) => {
 
         console.log('📊 Sorted matches by: LIVE → Tier → Kickoff time');
 
-        // Group by league
+        // Group by league (using league_id to avoid mixing leagues with same name)
         const groupedByLeague = matches.reduce((acc, match) => {
-            const leagueName = match.league_name;
-            if (!acc[leagueName]) {
-                acc[leagueName] = {
+            const leagueKey = `${match.league_id}`; // Use league_id as unique key
+            if (!acc[leagueKey]) {
+                acc[leagueKey] = {
                     league_id: match.league_id,
                     league_name: match.league_name,
                     league_country: match.league_country,
@@ -343,7 +343,7 @@ router.get('/', async (req, res) => {
                     matches: []
                 };
             }
-            acc[leagueName].matches.push(match);
+            acc[leagueKey].matches.push(match);
             return acc;
         }, {});
 
