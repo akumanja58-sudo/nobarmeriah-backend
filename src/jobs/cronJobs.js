@@ -8,6 +8,7 @@ let isLiveSyncRunning = false;
 let isDailySyncRunning = false;
 let isGradingRunning = false;
 let isCleanupRunning = false;
+let isFixStuckRunning = false;
 
 /**
  * Sync live matches setiap 1 menit
@@ -26,7 +27,7 @@ const startLiveSync = () => {
 
         try {
             const result = await matchSync.syncLiveMatches();
-
+            
             if (result.success) {
                 console.log(`✅ Live sync complete: ${result.liveCount} live matches`);
             } else {
@@ -59,7 +60,7 @@ const startDailySync = () => {
 
         try {
             const result = await matchSync.syncTodayMatches();
-
+            
             if (result.success) {
                 console.log(`✅ Daily sync complete: ${result.fetched} matches`);
             } else {
@@ -92,7 +93,7 @@ const startAutoGrading = () => {
 
         try {
             const result = await gradingService.gradeAllPendingPredictions();
-
+            
             if (result.success) {
                 if (result.graded > 0) {
                     console.log(`✅ Grading complete: ${result.graded} predictions graded, ${result.correct} correct`);
@@ -116,20 +117,20 @@ const startAutoGrading = () => {
 const startQuotaCheck = () => {
     cron.schedule('0 * * * *', async () => {
         console.log('\n📊 Checking API quota...');
-
+        
         try {
             const status = await apiFootball.getApiStatus();
-
+            
             if (status.success) {
                 const account = status.data.account;
                 const subscription = status.data.subscription;
                 const requests = status.data.requests;
-
+                
                 console.log('📊 API Status:');
                 console.log(`   Account: ${account.firstname} ${account.lastname}`);
                 console.log(`   Plan: ${subscription.plan}`);
                 console.log(`   Requests today: ${requests.current}/${requests.limit_day}`);
-
+                
                 // Warning jika mendekati limit
                 const usagePercent = (requests.current / requests.limit_day) * 100;
                 if (usagePercent > 80) {
@@ -161,7 +162,7 @@ const startAutoCleanup = () => {
 
         try {
             const result = await cleanupOldMatches(30); // 30 days
-
+            
             if (result.success) {
                 console.log(`✅ Cleanup complete: ${result.deleted} old matches deleted`);
             } else {
@@ -226,8 +227,8 @@ const cleanupOldMatches = async (days = 30) => {
 
         console.log(`✅ Successfully deleted ${toDeleteCount} old matches`);
 
-        return {
-            success: true,
+        return { 
+            success: true, 
             deleted: toDeleteCount,
             cutoffDate: cutoffISO.split('T')[0]
         };
@@ -239,17 +240,55 @@ const cleanupOldMatches = async (days = 30) => {
 };
 
 /**
+ * Auto fix stuck matches every 30 minutes
+ * Fixes matches that are "LIVE" for more than 4 hours
+ */
+const startFixStuckMatches = () => {
+    // Setiap 30 menit
+    cron.schedule('*/30 * * * *', async () => {
+        if (isFixStuckRunning) {
+            console.log('⏳ Fix stuck already running, skipping...');
+            return;
+        }
+
+        isFixStuckRunning = true;
+        console.log(`\n🔧 [${new Date().toLocaleTimeString()}] Running fix stuck matches...`);
+
+        try {
+            const result = await matchSync.fixStuckMatches(4); // 4 hours
+            
+            if (result.success) {
+                if (result.fixed > 0) {
+                    console.log(`✅ Fixed ${result.fixed} stuck matches`);
+                } else {
+                    console.log('✅ No stuck matches found');
+                }
+            } else {
+                console.error('❌ Fix stuck failed:', result.error);
+            }
+        } catch (error) {
+            console.error('❌ Fix stuck error:', error.message);
+        } finally {
+            isFixStuckRunning = false;
+        }
+    });
+
+    console.log('🔧 Fix stuck matches cron started (every 30 minutes)');
+};
+
+/**
  * Start all cron jobs
  */
 const startAllJobs = () => {
     console.log('\n🚀 Starting cron jobs...\n');
-
+    
     startLiveSync();
     startDailySync();
     startAutoGrading();
     startQuotaCheck();
-    startAutoCleanup();  // NEW: Auto cleanup old matches
-
+    startAutoCleanup();
+    startFixStuckMatches();  // NEW: Auto fix stuck matches
+    
     console.log('\n✅ All cron jobs started!\n');
 };
 
@@ -258,10 +297,10 @@ const startAllJobs = () => {
  */
 const runInitialSync = async () => {
     console.log('\n🔄 Running initial sync...\n');
-
+    
     try {
         const result = await matchSync.syncTodayMatches();
-
+        
         if (result.success) {
             console.log(`✅ Initial sync complete: ${result.fetched} matches loaded\n`);
             return result;
@@ -280,7 +319,7 @@ const runInitialSync = async () => {
  */
 const runManualGrading = async () => {
     console.log('\n🎯 Running manual grading...\n');
-
+    
     try {
         const result = await gradingService.gradeAllPendingPredictions();
         return result;
@@ -297,7 +336,8 @@ module.exports = {
     startAutoGrading,
     startQuotaCheck,
     startAutoCleanup,
+    startFixStuckMatches,
     runInitialSync,
     runManualGrading,
-    cleanupOldMatches  // Export for manual trigger
+    cleanupOldMatches
 };

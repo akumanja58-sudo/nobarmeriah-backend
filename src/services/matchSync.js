@@ -222,11 +222,97 @@ const syncLiveMatches = async () => {
     };
 };
 
+/**
+ * Fix stuck matches - matches that are "LIVE" for more than X hours
+ * These are likely matches where API didn't update the final status
+ * @param {number} maxHours - Maximum hours a match can be "LIVE" (default: 4)
+ */
+const fixStuckMatches = async (maxHours = 4) => {
+    if (!supabase) {
+        return { success: false, error: 'Supabase not configured' };
+    }
+
+    try {
+        console.log(`🔧 Checking for stuck matches (LIVE > ${maxHours} hours)...`);
+
+        // Calculate cutoff time (now - maxHours)
+        const cutoffTime = new Date();
+        cutoffTime.setHours(cutoffTime.getHours() - maxHours);
+        const cutoffISO = cutoffTime.toISOString();
+
+        // Find stuck matches: status is LIVE but match started more than X hours ago
+        const { data: stuckMatches, error: fetchError } = await supabase
+            .from('matches')
+            .select('*')
+            .eq('is_live', true)
+            .in('status_short', ['1H', '2H', 'HT', 'ET', 'P', 'BT', 'LIVE', 'INT'])
+            .lt('date', cutoffISO);
+
+        if (fetchError) {
+            console.error('❌ Error fetching stuck matches:', fetchError);
+            return { success: false, error: fetchError.message };
+        }
+
+        if (!stuckMatches || stuckMatches.length === 0) {
+            console.log('✅ No stuck matches found');
+            return { success: true, fixed: 0 };
+        }
+
+        console.log(`⚠️ Found ${stuckMatches.length} stuck matches`);
+
+        // Fix each stuck match - mark as FT (Finished) or ABD (Abandoned)
+        const fixedIds = [];
+        
+        for (const match of stuckMatches) {
+            const hoursStuck = Math.round((new Date() - new Date(match.date)) / (1000 * 60 * 60));
+            
+            console.log(`🔧 Fixing: ${match.home_team_name} vs ${match.away_team_name} (stuck ${hoursStuck}h)`);
+
+            // If match has scores, mark as FT. Otherwise mark as ABD
+            const newStatus = (match.home_score !== null && match.away_score !== null) ? 'FT' : 'ABD';
+            const newStatusLong = newStatus === 'FT' ? 'Match Finished' : 'Match Abandoned';
+
+            const { error: updateError } = await supabase
+                .from('matches')
+                .update({
+                    status: newStatus === 'FT' ? 'finished' : 'postponed',
+                    status_short: newStatus,
+                    status_long: newStatusLong,
+                    is_live: false,
+                    ft_home: match.home_score,
+                    ft_away: match.away_score,
+                    last_updated: new Date().toISOString()
+                })
+                .eq('id', match.id);
+
+            if (updateError) {
+                console.error(`❌ Failed to fix match ${match.id}:`, updateError);
+            } else {
+                fixedIds.push(match.id);
+                console.log(`✅ Fixed match ${match.id} → ${newStatus}`);
+            }
+        }
+
+        console.log(`✅ Fixed ${fixedIds.length} stuck matches`);
+
+        return {
+            success: true,
+            fixed: fixedIds.length,
+            fixedMatches: fixedIds
+        };
+
+    } catch (error) {
+        console.error('❌ Fix stuck matches error:', error);
+        return { success: false, error: error.message };
+    }
+};
+
 module.exports = {
     transformMatch,
     transformMatches,
     saveMatchesToDb,
     getMatchesFromDb,
     syncTodayMatches,
-    syncLiveMatches
+    syncLiveMatches,
+    fixStuckMatches
 };
