@@ -2,6 +2,22 @@ const { supabase } = require('../config/database');
 const apiFootball = require('./apiFootball');
 
 /**
+ * Blacklist match IDs - matches that are stuck/broken in API-Football
+ * These will be skipped when syncing and not saved to database
+ * Add match IDs here when they're stuck as LIVE for days
+ */
+const BLACKLISTED_MATCH_IDS = [
+    1434975,  // Rayners Lane vs Hitchin Town - stuck since 27/12/2025
+];
+
+/**
+ * Check if match is blacklisted
+ */
+const isBlacklisted = (matchId) => {
+    return BLACKLISTED_MATCH_IDS.includes(matchId);
+};
+
+/**
  * Transform API-Football response ke format yang lebih clean
  */
 const transformMatch = (match) => {
@@ -98,6 +114,7 @@ const transformMatches = (matches) => {
 
 /**
  * Save matches to Supabase (upsert)
+ * Filters out blacklisted matches before saving
  */
 const saveMatchesToDb = async (matches) => {
     if (!supabase) {
@@ -106,7 +123,22 @@ const saveMatchesToDb = async (matches) => {
     }
 
     try {
-        const transformedMatches = transformMatches(matches);
+        // Filter out blacklisted matches
+        const filteredMatches = matches.filter(match => {
+            const matchId = match.fixture?.id || match.id;
+            if (isBlacklisted(matchId)) {
+                console.log(`🚫 Skipping blacklisted match: ${matchId}`);
+                return false;
+            }
+            return true;
+        });
+
+        if (filteredMatches.length === 0) {
+            console.log('⚠️  No matches to save (all blacklisted or empty)');
+            return { success: true, count: 0 };
+        }
+
+        const transformedMatches = transformMatches(filteredMatches);
 
         const { data, error } = await supabase
             .from('matches')
@@ -342,5 +374,7 @@ module.exports = {
     getMatchesFromDb,
     syncTodayMatches,
     syncLiveMatches,
-    fixStuckMatches
+    fixStuckMatches,
+    isBlacklisted,
+    BLACKLISTED_MATCH_IDS
 };
