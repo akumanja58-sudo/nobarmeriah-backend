@@ -14,9 +14,9 @@ const transformMatch = (match) => {
     // Determine match status
     let status = 'scheduled';
     let isLive = false;
-    
+
     const shortStatus = fixture.status.short;
-    
+
     if (['1H', '2H', 'HT', 'ET', 'P', 'BT', 'LIVE'].includes(shortStatus)) {
         status = 'live';
         isLive = true;
@@ -35,14 +35,14 @@ const transformMatch = (match) => {
         timezone: fixture.timezone,
         venue: fixture.venue?.name || null,
         venue_city: fixture.venue?.city || null,
-        
+
         // Status
         status: status,
         status_short: shortStatus,
         status_long: fixture.status.long,
         elapsed: fixture.status.elapsed,
         is_live: isLive,
-        
+
         // League info
         league_id: league.id,
         league_name: league.name,
@@ -51,39 +51,39 @@ const transformMatch = (match) => {
         league_flag: league.flag,
         league_season: league.season,
         league_round: league.round,
-        
+
         // Home team
         home_team_id: teams.home.id,
         home_team_name: teams.home.name,
         home_team_logo: teams.home.logo,
         home_team_winner: teams.home.winner,
-        
+
         // Away team
         away_team_id: teams.away.id,
         away_team_name: teams.away.name,
         away_team_logo: teams.away.logo,
         away_team_winner: teams.away.winner,
-        
+
         // Goals
         home_score: goals.home,
         away_score: goals.away,
-        
+
         // Halftime score
         ht_home: score.halftime?.home,
         ht_away: score.halftime?.away,
-        
+
         // Fulltime score
         ft_home: score.fulltime?.home,
         ft_away: score.fulltime?.away,
-        
+
         // Extra time score
         et_home: score.extratime?.home,
         et_away: score.extratime?.away,
-        
+
         // Penalty score
         pen_home: score.penalty?.home,
         pen_away: score.penalty?.away,
-        
+
         // Metadata
         last_updated: new Date().toISOString()
     };
@@ -107,12 +107,12 @@ const saveMatchesToDb = async (matches) => {
 
     try {
         const transformedMatches = transformMatches(matches);
-        
+
         const { data, error } = await supabase
             .from('matches')
-            .upsert(transformedMatches, { 
+            .upsert(transformedMatches, {
                 onConflict: 'id',
-                ignoreDuplicates: false 
+                ignoreDuplicates: false
             });
 
         if (error) {
@@ -178,9 +178,9 @@ const getMatchesFromDb = async (filters = {}) => {
  */
 const syncTodayMatches = async () => {
     console.log('🔄 Syncing today matches...');
-    
+
     const result = await apiFootball.getTodayMatches();
-    
+
     if (!result.success) {
         console.error('❌ Failed to fetch matches:', result.error);
         return result;
@@ -190,7 +190,7 @@ const syncTodayMatches = async () => {
 
     // Save to database
     const saveResult = await saveMatchesToDb(result.data);
-    
+
     return {
         success: true,
         fetched: result.results,
@@ -204,9 +204,9 @@ const syncTodayMatches = async () => {
  */
 const syncLiveMatches = async () => {
     console.log('⚡ Syncing live matches...');
-    
+
     const result = await apiFootball.getLiveMatches();
-    
+
     if (!result.success) {
         return result;
     }
@@ -244,8 +244,7 @@ const fixStuckMatches = async (maxHours = 4) => {
         const { data: stuckMatches, error: fetchError } = await supabase
             .from('matches')
             .select('*')
-            .eq('is_live', true)
-            .in('status_short', ['1H', '2H', 'HT', 'ET', 'P', 'BT', 'LIVE', 'INT'])
+            .or('is_live.eq.true,status.eq.live')
             .lt('date', cutoffISO);
 
         if (fetchError) {
@@ -262,43 +261,72 @@ const fixStuckMatches = async (maxHours = 4) => {
 
         // Fix each stuck match - mark as FT (Finished) or ABD (Abandoned)
         const fixedIds = [];
-        
+        const failedIds = [];
+
         for (const match of stuckMatches) {
             const hoursStuck = Math.round((new Date() - new Date(match.date)) / (1000 * 60 * 60));
-            
+
             console.log(`🔧 Fixing: ${match.home_team_name} vs ${match.away_team_name} (stuck ${hoursStuck}h)`);
 
             // If match has scores, mark as FT. Otherwise mark as ABD
-            const newStatus = (match.home_score !== null && match.away_score !== null) ? 'FT' : 'ABD';
-            const newStatusLong = newStatus === 'FT' ? 'Match Finished' : 'Match Abandoned';
+            const hasScores = match.home_score !== null && match.away_score !== null;
+            const newStatusShort = hasScores ? 'FT' : 'ABD';
+            const newStatus = hasScores ? 'finished' : 'postponed';
+            const newStatusLong = hasScores ? 'Match Finished' : 'Match Abandoned';
 
-            const { error: updateError } = await supabase
+            // Update with explicit values
+            const updateData = {
+                status: newStatus,
+                status_short: newStatusShort,
+                status_long: newStatusLong,
+                is_live: false,
+                last_updated: new Date().toISOString()
+            };
+
+            // Also set final scores if available
+            if (hasScores) {
+                updateData.ft_home = match.home_score;
+                updateData.ft_away = match.away_score;
+            }
+
+            const { data: updateResult, error: updateError } = await supabase
                 .from('matches')
-                .update({
-                    status: newStatus === 'FT' ? 'finished' : 'postponed',
-                    status_short: newStatus,
-                    status_long: newStatusLong,
-                    is_live: false,
-                    ft_home: match.home_score,
-                    ft_away: match.away_score,
-                    last_updated: new Date().toISOString()
-                })
-                .eq('id', match.id);
+                .update(updateData)
+                .eq('id', match.id)
+                .select();
 
             if (updateError) {
-                console.error(`❌ Failed to fix match ${match.id}:`, updateError);
+                console.error(`❌ Failed to fix match ${match.id}:`, updateError.message);
+                failedIds.push({ id: match.id, error: updateError.message });
+            } else if (!updateResult || updateResult.length === 0) {
+                console.error(`❌ Match ${match.id} not updated (no rows affected)`);
+                failedIds.push({ id: match.id, error: 'No rows affected' });
             } else {
-                fixedIds.push(match.id);
-                console.log(`✅ Fixed match ${match.id} → ${newStatus}`);
+                // Verify the update
+                const updated = updateResult[0];
+                if (updated.is_live === false && updated.status_short === newStatusShort) {
+                    fixedIds.push(match.id);
+                    console.log(`✅ Fixed match ${match.id} → ${newStatusShort}`);
+                } else {
+                    console.error(`❌ Match ${match.id} update verification failed`);
+                    console.error(`   Expected: is_live=false, status_short=${newStatusShort}`);
+                    console.error(`   Got: is_live=${updated.is_live}, status_short=${updated.status_short}`);
+                    failedIds.push({ id: match.id, error: 'Verification failed' });
+                }
             }
         }
 
         console.log(`✅ Fixed ${fixedIds.length} stuck matches`);
+        if (failedIds.length > 0) {
+            console.log(`❌ Failed to fix ${failedIds.length} matches:`, failedIds);
+        }
 
         return {
             success: true,
             fixed: fixedIds.length,
-            fixedMatches: fixedIds
+            failed: failedIds.length,
+            fixedMatches: fixedIds,
+            failedMatches: failedIds
         };
 
     } catch (error) {
