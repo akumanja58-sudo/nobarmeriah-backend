@@ -63,14 +63,27 @@ router.get('/search', async (req, res) => {
             throw new Error(`SportSRC API error: ${response.status}`);
         }
 
-        const matches = await response.json();
+        const responseData = await response.json();
 
-        if (!matches || !Array.isArray(matches)) {
+        // Handle nested response structure from SportSRC
+        // Could be: { data: [...] } or { success: true, data: [...] } or just [...]
+        let matches = responseData;
+        if (responseData?.data?.data && Array.isArray(responseData.data.data)) {
+            matches = responseData.data.data;
+        } else if (responseData?.data && Array.isArray(responseData.data)) {
+            matches = responseData.data;
+        } else if (!Array.isArray(matches)) {
+            matches = [];
+        }
+
+        if (!matches || matches.length === 0) {
             return res.json({
                 success: false,
                 error: 'No matches available'
             });
         }
+
+        console.log(`[Streaming] Found ${matches.length} matches to search`);
 
         // Fuzzy search for matching teams
         const normalizeTeamName = (name) => {
