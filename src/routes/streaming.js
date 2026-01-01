@@ -74,29 +74,69 @@ router.get('/search', async (req, res) => {
 
         // Fuzzy search for matching teams
         const normalizeTeamName = (name) => {
+            if (!name) return '';
             return name
                 .toLowerCase()
-                .replace(/fc|cf|sc|ac|afc|united|city|town|rovers|wanderers/gi, '')
-                .replace(/[^a-z0-9]/g, '')
+                // Remove common suffixes/prefixes
+                .replace(/\b(fc|cf|sc|ac|afc|united|utd|city|town|rovers|wanderers|sporting|athletic|club|de|la|el)\b/gi, '')
+                .replace(/[^a-z0-9\s]/g, '')
+                .replace(/\s+/g, ' ')
                 .trim();
         };
 
         const homeNorm = normalizeTeamName(home);
         const awayNorm = normalizeTeamName(away);
 
-        // Calculate similarity score
+        console.log(`[Streaming] Normalized search: "${homeNorm}" vs "${awayNorm}"`);
+
+        // Calculate similarity score - improved algorithm
         const calculateSimilarity = (str1, str2) => {
-            const longer = str1.length > str2.length ? str1 : str2;
-            const shorter = str1.length > str2.length ? str2 : str1;
+            if (!str1 || !str2) return 0;
 
-            if (longer.length === 0) return 1.0;
-            if (longer.includes(shorter) || shorter.includes(longer)) return 0.9;
+            const s1 = str1.toLowerCase().trim();
+            const s2 = str2.toLowerCase().trim();
 
+            // Exact match
+            if (s1 === s2) return 1.0;
+
+            // One contains the other (e.g., "Auckland" in "Auckland FC")
+            if (s1.includes(s2) || s2.includes(s1)) return 0.95;
+
+            // Word-based matching
+            const words1 = s1.split(/\s+/);
+            const words2 = s2.split(/\s+/);
+
+            // Check if main word matches (first significant word)
+            if (words1[0] === words2[0] && words1[0].length > 2) return 0.9;
+
+            // Count matching words
+            let matchingWords = 0;
+            for (const w1 of words1) {
+                if (w1.length < 3) continue;
+                for (const w2 of words2) {
+                    if (w2.length < 3) continue;
+                    if (w1 === w2 || w1.includes(w2) || w2.includes(w1)) {
+                        matchingWords++;
+                        break;
+                    }
+                }
+            }
+
+            const maxWords = Math.max(words1.length, words2.length);
+            if (matchingWords > 0) {
+                return 0.6 + (matchingWords / maxWords) * 0.3;
+            }
+
+            // Character-based fallback
             let matches = 0;
+            const longer = s1.length > s2.length ? s1 : s2;
+            const shorter = s1.length > s2.length ? s2 : s1;
+
             for (let i = 0; i < shorter.length; i++) {
                 if (longer.includes(shorter[i])) matches++;
             }
-            return matches / longer.length;
+
+            return (matches / longer.length) * 0.5;
         };
 
         // Find best match
@@ -105,37 +145,42 @@ router.get('/search', async (req, res) => {
 
         for (const match of matches) {
             // SportSRC format: teams.home.name, teams.away.name
-            const matchHome = normalizeTeamName(
-                match.teams?.home?.name ||
+            const matchHomeRaw = match.teams?.home?.name ||
                 match.title?.split(' vs ')?.[0] ||
+                match.title?.split(' - ')?.[0] ||
                 match.home ||
-                ''
-            );
-            const matchAway = normalizeTeamName(
-                match.teams?.away?.name ||
+                '';
+            const matchAwayRaw = match.teams?.away?.name ||
                 match.title?.split(' vs ')?.[1] ||
+                match.title?.split(' - ')?.[1] ||
                 match.away ||
-                ''
-            );
+                '';
 
-            const homeScore = Math.max(
-                calculateSimilarity(homeNorm, matchHome),
-                calculateSimilarity(homeNorm, matchAway)
-            );
-            const awayScore = Math.max(
-                calculateSimilarity(awayNorm, matchHome),
-                calculateSimilarity(awayNorm, matchAway)
-            );
+            const matchHome = normalizeTeamName(matchHomeRaw);
+            const matchAway = normalizeTeamName(matchAwayRaw);
 
-            const totalScore = (homeScore + awayScore) / 2;
+            // Calculate scores both ways (in case home/away are swapped)
+            const homeVsHome = calculateSimilarity(homeNorm, matchHome);
+            const awayVsAway = calculateSimilarity(awayNorm, matchAway);
+            const homeVsAway = calculateSimilarity(homeNorm, matchAway);
+            const awayVsHome = calculateSimilarity(awayNorm, matchHome);
 
-            if (totalScore > bestScore && totalScore >= 0.5) {
+            // Normal order
+            const normalScore = (homeVsHome + awayVsAway) / 2;
+            // Swapped order
+            const swappedScore = (homeVsAway + awayVsHome) / 2;
+
+            const totalScore = Math.max(normalScore, swappedScore);
+
+            if (totalScore > bestScore) {
                 bestScore = totalScore;
                 bestMatch = match;
+                console.log(`[Streaming] Candidate: "${matchHomeRaw}" vs "${matchAwayRaw}" = ${totalScore.toFixed(2)}`);
             }
         }
 
-        if (bestMatch && bestScore >= 0.6) {
+        // Lower threshold to 0.5 for more matches
+        if (bestMatch && bestScore >= 0.5) {
             console.log(`[Streaming] Found match: ${bestMatch.title || bestMatch.id} (score: ${bestScore.toFixed(2)})`);
 
             // Get stream details - Fixed URL: /?data=detail&category=football&id=xxx
