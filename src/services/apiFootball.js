@@ -244,6 +244,38 @@ const getStandings = async (leagueId, season = null) => {
 };
 
 /**
+ * Get Head-to-Head data between two teams
+ * @param {string|number} team1 - First team ID
+ * @param {string|number} team2 - Second team ID
+ * @param {number} last - Number of past matches (default: 12)
+ */
+const getH2H = async (team1, team2, last = 12) => {
+    try {
+        console.log(`⚔️ Fetching H2H: team1=${team1}, team2=${team2}, last=${last}`);
+
+        const response = await apiClient.get('/fixtures/headtohead', {
+            params: {
+                h2h: `${team1}-${team2}`,
+                last: last
+            }
+        });
+
+        if (response.data.errors && Object.keys(response.data.errors).length > 0) {
+            console.error('❌ H2H API Error:', response.data.errors);
+            return { success: false, error: response.data.errors };
+        }
+
+        return {
+            success: true,
+            data: response.data.response || []
+        };
+    } catch (error) {
+        console.error('❌ H2H request failed:', error.message);
+        return { success: false, error: error.message };
+    }
+};
+
+/**
  * Get pre-match odds for a fixture
  */
 const getOdds = async (fixtureId) => {
@@ -323,8 +355,9 @@ module.exports = {
     getMatchEvents,
     getMatchLineups,
     getStandings,
-    getOdds,      // NEW
-    getLiveOdds,  // NEW
+    getH2H,       // <-- INI YANG BARU BREK!
+    getOdds,
+    getLiveOdds,
     getApiStatus,
     getCurrentSeason,
     formatDate,

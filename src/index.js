@@ -7,6 +7,7 @@ const cors = require('cors');
 const matchesRouter = require('./routes/matches');
 const leaguesRouter = require('./routes/leagues');
 const standingsRouter = require('./routes/standings');
+const h2hRouter = require('./routes/h2h');
 const oddsRouter = require('./routes/odds');
 const streamingRouter = require('./routes/streaming');
 
@@ -90,6 +91,7 @@ app.get('/api/status', async (req, res) => {
 app.use('/api/matches', matchesRouter);
 app.use('/api/leagues', leaguesRouter);
 app.use('/api/standings', standingsRouter);
+app.use('/api/h2h', h2hRouter);
 app.use('/api/odds', oddsRouter);
 app.use('/api/streaming', streamingRouter);
 
