@@ -3,22 +3,32 @@ const router = express.Router();
 const { createClient } = require('@supabase/supabase-js');
 
 // Supabase Admin Client (dengan service_role key untuk akses penuh)
-const supabaseAdmin = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY,
-    {
-        auth: {
-            autoRefreshToken: false,
-            persistSession: false
+// Hanya dibuat jika key tersedia
+let supabaseAdmin = null;
+if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    supabaseAdmin = createClient(
+        process.env.SUPABASE_URL,
+        process.env.SUPABASE_SERVICE_ROLE_KEY,
+        {
+            auth: {
+                autoRefreshToken: false,
+                persistSession: false
+            }
         }
-    }
-);
+    );
+    console.log('✅ Supabase Admin Client initialized');
+} else {
+    console.warn('⚠️ SUPABASE_SERVICE_ROLE_KEY not set - delete account will not work');
+}
 
 // Supabase Regular Client (untuk operasi database biasa)
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_ANON_KEY
-);
+let supabase = null;
+if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
+    supabase = createClient(
+        process.env.SUPABASE_URL,
+        process.env.SUPABASE_ANON_KEY
+    );
+}
 
 /**
  * DELETE /api/account/delete
@@ -28,6 +38,14 @@ const supabase = createClient(
  */
 router.delete('/delete', async (req, res) => {
     try {
+        // Cek apakah Supabase Admin sudah dikonfigurasi
+        if (!supabaseAdmin || !supabase) {
+            return res.status(500).json({
+                success: false,
+                error: 'Server belum dikonfigurasi dengan benar. Hubungi admin.'
+            });
+        }
+
         const { userId, email } = req.body;
 
         // Validasi input
@@ -125,12 +143,12 @@ router.delete('/delete', async (req, res) => {
  */
 router.get('/check', (req, res) => {
     const hasServiceKey = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
-    
+
     res.json({
         success: true,
         serviceKeyConfigured: hasServiceKey,
-        message: hasServiceKey 
-            ? 'Service role key configured' 
+        message: hasServiceKey
+            ? 'Service role key configured'
             : 'WARNING: SUPABASE_SERVICE_ROLE_KEY not set!'
     });
 });
