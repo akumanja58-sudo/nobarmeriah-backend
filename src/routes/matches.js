@@ -5,6 +5,146 @@ const matchSync = require('../services/matchSync');
 const { supabase } = require('../config/database');
 
 /**
+ * GET /api/matches/top-players
+ * Get top rated players from today's finished matches
+ */
+router.get('/top-players', async (req, res) => {
+    try {
+        const { limit = 3 } = req.query;
+
+        // Get today's date range
+        const today = new Date();
+        const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
+        const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1).toISOString();
+
+        // First, get finished matches from today from database
+        const { data: finishedMatches, error: dbError } = await supabase
+            .from('matches')
+            .select('id, home_team_name, away_team_name, home_score, away_score, league_name')
+            .gte('date', startOfDay)
+            .lt('date', endOfDay)
+            .in('status_short', ['FT', 'AET', 'PEN'])
+            .limit(10);
+
+        if (dbError) {
+            console.error('❌ DB Error fetching finished matches:', dbError);
+        }
+
+        const allPlayers = [];
+        const matchesToProcess = finishedMatches || [];
+
+        console.log(`🏆 Found ${matchesToProcess.length} finished matches today for top players`);
+
+        // Fetch player stats for each finished match (max 5 to avoid API overload)
+        for (const match of matchesToProcess.slice(0, 5)) {
+            try {
+                // Fetch fixture/players endpoint which includes ratings
+                const playersResult = await apiFootball.request('/fixtures/players', { fixture: match.id });
+
+                if (playersResult.success && playersResult.data) {
+                    playersResult.data.forEach(teamPlayers => {
+                        const players = teamPlayers.players || [];
+                        players.forEach(playerStats => {
+                            const player = playerStats.player;
+                            const stats = playerStats.statistics?.[0];
+                            const rating = stats?.games?.rating;
+
+                            if (rating && parseFloat(rating) >= 7.0) {
+                                allPlayers.push({
+                                    id: player?.id,
+                                    name: player?.name || 'Unknown',
+                                    photo: player?.photo || `https://media.api-sports.io/football/players/${player?.id}.png`,
+                                    position: translatePosition(stats?.games?.position),
+                                    rating: parseFloat(rating),
+                                    matchId: match.id,
+                                    matchScore: `${match.home_score} - ${match.away_score}`,
+                                    league: match.league_name,
+                                    goals: stats?.goals?.total || 0,
+                                    assists: stats?.goals?.assists || 0,
+                                });
+                            }
+                        });
+                    });
+                }
+            } catch (apiErr) {
+                console.log(`⚠️ Could not fetch players for match ${match.id}:`, apiErr.message);
+            }
+        }
+
+        // Sort by rating descending
+        allPlayers.sort((a, b) => b.rating - a.rating);
+
+        // Get top N players
+        const topPlayers = allPlayers.slice(0, parseInt(limit)).map((p, idx) => ({
+            rank: idx + 1,
+            id: p.id,
+            name: p.name,
+            photo: p.photo,
+            position: p.position,
+            rating: p.rating.toFixed(1),
+            stats: p.matchScore,
+            league: p.league,
+            goals: p.goals,
+            assists: p.assists,
+            initial: (p.name || 'U')[0].toUpperCase(),
+            color: getRatingColor(p.rating),
+        }));
+
+        // If no players found, return placeholder message
+        if (topPlayers.length === 0) {
+            console.log('⚠️ No rated players found - returning placeholder');
+            return res.json({
+                success: true,
+                data: [],
+                message: 'Belum ada data rating pemain untuk match hari ini. Data biasanya tersedia untuk liga-liga top (Premier League, La Liga, Serie A, dll).',
+                totalMatches: matchesToProcess.length,
+                lastUpdated: new Date().toISOString()
+            });
+        }
+
+        console.log(`🏆 Top ${topPlayers.length} players:`, topPlayers.map(p => `${p.name} (${p.rating})`).join(', '));
+
+        res.json({
+            success: true,
+            data: topPlayers,
+            totalMatches: matchesToProcess.length,
+            lastUpdated: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('❌ Top players error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// Helper: Translate position to Indonesian
+function translatePosition(pos) {
+    const positions = {
+        'G': 'Kiper',
+        'D': 'Bek',
+        'M': 'Gelandang',
+        'F': 'Penyerang',
+        'Goalkeeper': 'Kiper',
+        'Defender': 'Bek',
+        'Midfielder': 'Gelandang',
+        'Attacker': 'Penyerang',
+    };
+    return positions[pos] || 'Pemain';
+}
+
+// Helper: Get rating color
+function getRatingColor(rating) {
+    if (rating >= 9.0) return '#10B981'; // Green
+    if (rating >= 8.5) return '#34D399'; // Light Green  
+    if (rating >= 8.0) return '#FBBF24'; // Yellow
+    if (rating >= 7.5) return '#F97316'; // Orange
+    return '#EF4444'; // Red
+}
+
+/**
  * GET /api/matches/archived
  * Get archived/finished matches from database
  */
