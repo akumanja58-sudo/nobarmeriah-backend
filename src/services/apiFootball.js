@@ -342,6 +342,66 @@ const getApiStatus = async () => {
     }
 };
 
+/**
+ * Get match predictions
+ * @param {string|number} fixtureId - Fixture ID
+ */
+const getPredictions = async (fixtureId) => {
+    try {
+        console.log(`🔮 Fetching predictions for fixture: ${fixtureId}`);
+
+        const response = await apiClient.get('/predictions', {
+            params: { fixture: fixtureId }
+        });
+
+        if (response.data.errors && Object.keys(response.data.errors).length > 0) {
+            console.error('❌ Predictions API Error:', response.data.errors);
+            return { success: false, error: response.data.errors };
+        }
+
+        return {
+            success: true,
+            data: response.data.response || []
+        };
+    } catch (error) {
+        console.error('❌ Predictions request failed:', error.message);
+        return { success: false, error: error.message };
+    }
+};
+
+/**
+ * Get team statistics for a season
+ * @param {string|number} teamId - Team ID
+ * @param {string|number} leagueId - League ID
+ * @param {string|number} season - Season year
+ */
+const getTeamStatistics = async (teamId, leagueId, season) => {
+    try {
+        console.log(`📊 Fetching team statistics: team=${teamId}, league=${leagueId}, season=${season}`);
+
+        const response = await apiClient.get('/teams/statistics', {
+            params: {
+                team: teamId,
+                league: leagueId,
+                season: season
+            }
+        });
+
+        if (response.data.errors && Object.keys(response.data.errors).length > 0) {
+            console.error('❌ Team Statistics API Error:', response.data.errors);
+            return { success: false, error: response.data.errors };
+        }
+
+        return {
+            success: true,
+            data: response.data.response || null
+        };
+    } catch (error) {
+        console.error('❌ Team Statistics request failed:', error.message);
+        return { success: false, error: error.message };
+    }
+};
+
 module.exports = {
     getTodayMatches,
     getMatchesByDate,
@@ -355,11 +415,13 @@ module.exports = {
     getMatchEvents,
     getMatchLineups,
     getStandings,
-    getH2H,       // <-- INI YANG BARU BREK!
+    getH2H,
     getOdds,
     getLiveOdds,
     getApiStatus,
     getCurrentSeason,
     formatDate,
-    POPULAR_LEAGUES
+    POPULAR_LEAGUES,
+    getPredictions,
+    getTeamStatistics,
 };

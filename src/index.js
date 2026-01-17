@@ -10,6 +10,8 @@ const standingsRouter = require('./routes/standings');
 const h2hRouter = require('./routes/h2h');
 const oddsRouter = require('./routes/odds');
 const streamingRouter = require('./routes/streaming');
+const predictionsRouter = require('./routes/predictions');
+const teamStatsRouter = require('./routes/teamStats');
 
 // Import jobs
 const cronJobs = require('./jobs/cronJobs');
@@ -93,6 +95,8 @@ app.use('/api/leagues', leaguesRouter);
 app.use('/api/standings', standingsRouter);
 app.use('/api/h2h', h2hRouter);
 app.use('/api/odds', oddsRouter);
+app.use('/api/predictions', predictionsRouter);
+app.use('/api/teams/statistics', teamStatsRouter);
 app.use('/api/streaming', streamingRouter);
 
 // 404 handler
