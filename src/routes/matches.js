@@ -6,108 +6,123 @@ const { supabase } = require('../config/database');
 
 /**
  * GET /api/matches/top-players
- * Get top rated players from today's finished matches
+ * Get top rated players from top leagues (Premier League, La Liga, etc)
  */
 router.get('/top-players', async (req, res) => {
     try {
-        const { limit = 3 } = req.query;
+        const { limit = 5 } = req.query;
 
-        // Get today's date range
-        const today = new Date();
-        const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
-        const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1).toISOString();
+        console.log(`📥 GET /api/matches/top-players (limit: ${limit})`);
 
-        // First, get finished matches from today from database
-        const { data: finishedMatches, error: dbError } = await supabase
-            .from('matches')
-            .select('id, home_team_name, away_team_name, home_score, away_score, league_name')
-            .gte('date', startOfDay)
-            .lt('date', endOfDay)
-            .in('status_short', ['FT', 'AET', 'PEN'])
-            .limit(10);
+        // Use getTopPlayers from apiFootball helper
+        const result = await apiFootball.getTopPlayers(parseInt(limit));
 
-        if (dbError) {
-            console.error('❌ DB Error fetching finished matches:', dbError);
-        }
+        if (!result.success || !result.data || result.data.length === 0) {
+            // Fallback: try to get from today's finished matches
+            console.log('⚠️ No top players from leagues, trying finished matches...');
 
-        const allPlayers = [];
-        const matchesToProcess = finishedMatches || [];
+            const today = new Date();
+            const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
+            const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1).toISOString();
 
-        console.log(`🏆 Found ${matchesToProcess.length} finished matches today for top players`);
+            const { data: finishedMatches, error: dbError } = await supabase
+                .from('matches')
+                .select('id, home_team_name, away_team_name, home_score, away_score, league_name')
+                .gte('date', startOfDay)
+                .lt('date', endOfDay)
+                .in('status_short', ['FT', 'AET', 'PEN'])
+                .limit(5);
 
-        // Fetch player stats for each finished match (max 5 to avoid API overload)
-        for (const match of matchesToProcess.slice(0, 5)) {
-            try {
-                // Fetch fixture/players endpoint which includes ratings
-                const playersResult = await apiFootball.request('/fixtures/players', { fixture: match.id });
-
-                if (playersResult.success && playersResult.data) {
-                    playersResult.data.forEach(teamPlayers => {
-                        const players = teamPlayers.players || [];
-                        players.forEach(playerStats => {
-                            const player = playerStats.player;
-                            const stats = playerStats.statistics?.[0];
-                            const rating = stats?.games?.rating;
-
-                            if (rating && parseFloat(rating) >= 7.0) {
-                                allPlayers.push({
-                                    id: player?.id,
-                                    name: player?.name || 'Unknown',
-                                    photo: player?.photo || `https://media.api-sports.io/football/players/${player?.id}.png`,
-                                    position: translatePosition(stats?.games?.position),
-                                    rating: parseFloat(rating),
-                                    matchId: match.id,
-                                    matchScore: `${match.home_score} - ${match.away_score}`,
-                                    league: match.league_name,
-                                    goals: stats?.goals?.total || 0,
-                                    assists: stats?.goals?.assists || 0,
-                                });
-                            }
-                        });
-                    });
-                }
-            } catch (apiErr) {
-                console.log(`⚠️ Could not fetch players for match ${match.id}:`, apiErr.message);
+            if (dbError || !finishedMatches || finishedMatches.length === 0) {
+                return res.json({
+                    success: true,
+                    data: [],
+                    message: 'Belum ada data rating pemain. Data tersedia setelah match liga top selesai.',
+                    lastUpdated: new Date().toISOString()
+                });
             }
-        }
 
-        // Sort by rating descending
-        allPlayers.sort((a, b) => b.rating - a.rating);
+            const allPlayers = [];
 
-        // Get top N players
-        const topPlayers = allPlayers.slice(0, parseInt(limit)).map((p, idx) => ({
-            rank: idx + 1,
-            id: p.id,
-            name: p.name,
-            photo: p.photo,
-            position: p.position,
-            rating: p.rating.toFixed(1),
-            stats: p.matchScore,
-            league: p.league,
-            goals: p.goals,
-            assists: p.assists,
-            initial: (p.name || 'U')[0].toUpperCase(),
-            color: getRatingColor(p.rating),
-        }));
+            for (const match of finishedMatches) {
+                try {
+                    const playersResult = await apiFootball.getFixturePlayers(match.id);
 
-        // If no players found, return placeholder message
-        if (topPlayers.length === 0) {
-            console.log('⚠️ No rated players found - returning placeholder');
+                    if (playersResult.success && playersResult.data) {
+                        playersResult.data.forEach(teamPlayers => {
+                            const players = teamPlayers.players || [];
+                            players.forEach(playerStats => {
+                                const player = playerStats.player;
+                                const stats = playerStats.statistics?.[0];
+                                const rating = stats?.games?.rating;
+
+                                if (rating && parseFloat(rating) >= 7.0) {
+                                    allPlayers.push({
+                                        id: player?.id,
+                                        name: player?.name || 'Unknown',
+                                        photo: player?.photo,
+                                        position: translatePosition(stats?.games?.position),
+                                        rating: parseFloat(rating),
+                                        goals: stats?.goals?.total || 0,
+                                        assists: stats?.goals?.assists || 0,
+                                    });
+                                }
+                            });
+                        });
+                    }
+                } catch (err) {
+                    console.log(`⚠️ Could not fetch players for match ${match.id}`);
+                }
+            }
+
+            allPlayers.sort((a, b) => b.rating - a.rating);
+
+            const topPlayers = allPlayers.slice(0, parseInt(limit)).map((p, idx) => ({
+                rank: idx + 1,
+                id: p.id,
+                name: p.name,
+                photo: p.photo,
+                initial: (p.name || 'U')[0].toUpperCase(),
+                position: p.position,
+                rating: p.rating,
+                color: getRatingColor(p.rating),
+                stats: `${p.goals}G ${p.assists}A`,
+                goals: p.goals,
+                assists: p.assists,
+            }));
+
             return res.json({
                 success: true,
-                data: [],
-                message: 'Belum ada data rating pemain untuk match hari ini. Data biasanya tersedia untuk liga-liga top (Premier League, La Liga, Serie A, dll).',
-                totalMatches: matchesToProcess.length,
+                data: topPlayers,
+                source: 'finished_matches',
                 lastUpdated: new Date().toISOString()
             });
         }
 
-        console.log(`🏆 Top ${topPlayers.length} players:`, topPlayers.map(p => `${p.name} (${p.rating})`).join(', '));
+        // Format response from getTopPlayers
+        const topPlayers = result.data.map((p, idx) => ({
+            rank: idx + 1,
+            id: p.id,
+            name: p.name,
+            photo: p.photo,
+            initial: (p.name || 'U')[0].toUpperCase(),
+            position: translatePosition(p.position),
+            team: p.team,
+            teamLogo: p.teamLogo,
+            rating: p.rating,
+            color: getRatingColor(p.rating),
+            stats: `${p.goals}G ${p.assists}A`,
+            goals: p.goals,
+            assists: p.assists,
+            appearances: p.appearances,
+        }));
+
+        console.log(`✅ Returning ${topPlayers.length} top players`);
 
         res.json({
             success: true,
             data: topPlayers,
-            totalMatches: matchesToProcess.length,
+            source: 'top_leagues',
             lastUpdated: new Date().toISOString()
         });
 

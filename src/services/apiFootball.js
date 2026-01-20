@@ -402,6 +402,137 @@ const getTeamStatistics = async (teamId, leagueId, season) => {
     }
 };
 
+/**
+ * Get players statistics by league and season
+ * @param {string|number} leagueId - League ID
+ * @param {string|number} season - Season year
+ * @param {number} page - Page number (default: 1)
+ */
+const getPlayersStatistics = async (leagueId, season = null, page = 1) => {
+    try {
+        const params = {
+            league: leagueId,
+            season: season || getCurrentSeason(),
+            page: page
+        };
+
+        console.log(`👤 Fetching players: league=${leagueId}, season=${params.season}, page=${page}`);
+
+        const response = await apiClient.get('/players', { params });
+
+        if (response.data.errors && Object.keys(response.data.errors).length > 0) {
+            console.error('❌ Players API Error:', response.data.errors);
+            return { success: false, error: response.data.errors };
+        }
+
+        return {
+            success: true,
+            data: response.data.response || [],
+            paging: response.data.paging
+        };
+    } catch (error) {
+        console.error('❌ Players request failed:', error.message);
+        return { success: false, error: error.message };
+    }
+};
+
+/**
+ * Get top rated players from top leagues
+ * @param {number} limit - Number of players to return (default: 5)
+ */
+const getTopPlayers = async (limit = 5) => {
+    try {
+        console.log(`🌟 Fetching top ${limit} players from top leagues...`);
+
+        const TOP_LEAGUES = [39, 140, 135, 78, 61, 2]; // PL, La Liga, Serie A, Bundesliga, Ligue 1, UCL
+        const season = getCurrentSeason();
+        let allPlayers = [];
+
+        for (const leagueId of TOP_LEAGUES) {
+            const result = await getPlayersStatistics(leagueId, season, 1);
+
+            if (result.success && result.data) {
+                const players = result.data
+                    .filter(item => {
+                        const rating = parseFloat(item.statistics?.[0]?.games?.rating) || 0;
+                        const appearances = item.statistics?.[0]?.games?.appearences || 0;
+                        return rating > 0 && appearances >= 5;
+                    })
+                    .map(item => ({
+                        id: item.player.id,
+                        name: item.player.name,
+                        photo: item.player.photo,
+                        age: item.player.age,
+                        nationality: item.player.nationality,
+                        position: item.statistics?.[0]?.games?.position || 'Unknown',
+                        team: item.statistics?.[0]?.team?.name || 'Unknown',
+                        teamLogo: item.statistics?.[0]?.team?.logo,
+                        leagueId: leagueId,
+                        rating: parseFloat(item.statistics?.[0]?.games?.rating) || 0,
+                        appearances: item.statistics?.[0]?.games?.appearences || 0,
+                        goals: item.statistics?.[0]?.goals?.total || 0,
+                        assists: item.statistics?.[0]?.goals?.assists || 0,
+                    }));
+
+                allPlayers = [...allPlayers, ...players];
+            }
+
+            // Small delay to avoid rate limiting
+            await new Promise(resolve => setTimeout(resolve, 150));
+        }
+
+        // Sort by rating (highest first)
+        allPlayers.sort((a, b) => b.rating - a.rating);
+
+        // Remove duplicates
+        const uniquePlayers = [];
+        const seenIds = new Set();
+        for (const player of allPlayers) {
+            if (!seenIds.has(player.id)) {
+                seenIds.add(player.id);
+                uniquePlayers.push(player);
+            }
+        }
+
+        console.log(`✅ Found ${uniquePlayers.length} unique top players`);
+
+        return {
+            success: true,
+            data: uniquePlayers.slice(0, limit)
+        };
+    } catch (error) {
+        console.error('❌ Top Players request failed:', error.message);
+        return { success: false, error: error.message };
+    }
+};
+
+/**
+ * Get player statistics by fixture (match)
+ * @param {string|number} fixtureId - Fixture ID
+ */
+const getFixturePlayers = async (fixtureId) => {
+    try {
+        console.log(`👥 Fetching players for fixture: ${fixtureId}`);
+
+        const response = await apiClient.get('/fixtures/players', {
+            params: { fixture: fixtureId }
+        });
+
+        if (response.data.errors && Object.keys(response.data.errors).length > 0) {
+            console.error('❌ Fixture Players API Error:', response.data.errors);
+            return { success: false, error: response.data.errors };
+        }
+
+        return {
+            success: true,
+            data: response.data.response || []
+        };
+    } catch (error) {
+        console.error('❌ Fixture Players request failed:', error.message);
+        return { success: false, error: error.message };
+    }
+};
+
 module.exports = {
     getTodayMatches,
     getMatchesByDate,
@@ -424,4 +555,7 @@ module.exports = {
     POPULAR_LEAGUES,
     getPredictions,
     getTeamStatistics,
+    getPlayersStatistics,
+    getTopPlayers,
+    getFixturePlayers,
 };
