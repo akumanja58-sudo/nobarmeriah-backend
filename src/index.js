@@ -13,6 +13,7 @@ const streamingRouter = require('./routes/streaming');
 const predictionsRouter = require('./routes/predictions');
 const teamStatsRouter = require('./routes/teamStats');
 const accountRouter = require('./routes/account');
+const logoutRouter = require('./routes/logout');
 
 // Import jobs
 const cronJobs = require('./jobs/cronJobs');
@@ -100,6 +101,7 @@ app.use('/api/predictions', predictionsRouter);
 app.use('/api/teams/statistics', teamStatsRouter);
 app.use('/api/streaming', streamingRouter);
 app.use('/api/account', accountRouter);
+app.use('/api/logout', logoutRouter);
 
 // 404 handler
 app.use((req, res) => {
