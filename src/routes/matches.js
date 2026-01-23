@@ -6,7 +6,8 @@ const { supabase } = require('../config/database');
 
 /**
  * GET /api/matches/top-players
- * Get top rated players from top leagues (Premier League, La Liga, etc)
+ * Get top rated players from TODAY'S finished matches
+ * Fallback to season stats if no finished matches today
  */
 router.get('/top-players', async (req, res) => {
     try {
@@ -14,115 +15,160 @@ router.get('/top-players', async (req, res) => {
 
         console.log(`📥 GET /api/matches/top-players (limit: ${limit})`);
 
-        // Use getTopPlayers from apiFootball helper
-        const result = await apiFootball.getTopPlayers(parseInt(limit));
+        // PRIORITAS 1: Ambil dari match HARI INI yang udah selesai (FT)
+        const today = new Date();
+        const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
+        const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1).toISOString();
 
-        if (!result.success || !result.data || result.data.length === 0) {
-            // Fallback: try to get from today's finished matches
-            console.log('⚠️ No top players from leagues, trying finished matches...');
+        console.log(`📅 Looking for finished matches: ${startOfDay} - ${endOfDay}`);
 
-            const today = new Date();
-            const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
-            const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1).toISOString();
+        const { data: finishedMatches, error: dbError } = await supabase
+            .from('matches')
+            .select('id, home_team_name, away_team_name, home_score, away_score, league_name, league_id')
+            .gte('date', startOfDay)
+            .lt('date', endOfDay)
+            .in('status_short', ['FT', 'AET', 'PEN'])
+            .order('date', { ascending: false })
+            .limit(15); // Ambil lebih banyak untuk dapat pemain yang cukup
 
-            const { data: finishedMatches, error: dbError } = await supabase
-                .from('matches')
-                .select('id, home_team_name, away_team_name, home_score, away_score, league_name')
-                .gte('date', startOfDay)
-                .lt('date', endOfDay)
-                .in('status_short', ['FT', 'AET', 'PEN'])
-                .limit(5);
+        if (dbError) {
+            console.error('❌ DB Error:', dbError);
+        }
 
-            if (dbError || !finishedMatches || finishedMatches.length === 0) {
-                return res.json({
-                    success: true,
-                    data: [],
-                    message: 'Belum ada data rating pemain. Data tersedia setelah match liga top selesai.',
-                    lastUpdated: new Date().toISOString()
-                });
-            }
+        const allPlayers = [];
 
-            const allPlayers = [];
+        // Kalau ada match yang udah selesai hari ini
+        if (finishedMatches && finishedMatches.length > 0) {
+            console.log(`🏆 Found ${finishedMatches.length} finished matches today`);
 
-            for (const match of finishedMatches) {
+            // Fetch player ratings dari setiap match (max 10 untuk hemat API calls)
+            for (const match of finishedMatches.slice(0, 10)) {
                 try {
+                    console.log(`👥 Fetching players for match ${match.id}: ${match.home_team_name} vs ${match.away_team_name}`);
+
                     const playersResult = await apiFootball.getFixturePlayers(match.id);
 
                     if (playersResult.success && playersResult.data) {
                         playersResult.data.forEach(teamPlayers => {
+                            const teamInfo = teamPlayers.team;
                             const players = teamPlayers.players || [];
+
                             players.forEach(playerStats => {
                                 const player = playerStats.player;
                                 const stats = playerStats.statistics?.[0];
                                 const rating = stats?.games?.rating;
 
-                                if (rating && parseFloat(rating) >= 7.0) {
+                                // Ambil pemain dengan rating >= 6.5
+                                if (rating && parseFloat(rating) >= 6.5) {
                                     allPlayers.push({
                                         id: player?.id,
                                         name: player?.name || 'Unknown',
                                         photo: player?.photo,
                                         position: translatePosition(stats?.games?.position),
+                                        team: teamInfo?.name || 'Unknown',
+                                        teamLogo: teamInfo?.logo,
                                         rating: parseFloat(rating),
                                         goals: stats?.goals?.total || 0,
                                         assists: stats?.goals?.assists || 0,
+                                        matchId: match.id,
+                                        league: match.league_name,
                                     });
                                 }
                             });
                         });
                     }
+
+                    // Delay kecil untuk hindari rate limit
+                    await new Promise(resolve => setTimeout(resolve, 100));
+
                 } catch (err) {
-                    console.log(`⚠️ Could not fetch players for match ${match.id}`);
+                    console.log(`⚠️ Could not fetch players for match ${match.id}:`, err.message);
+                }
+            }
+        }
+
+        // Kalau dapat pemain dari match hari ini
+        if (allPlayers.length > 0) {
+            // Sort by rating (tertinggi dulu)
+            allPlayers.sort((a, b) => b.rating - a.rating);
+
+            // Remove duplicates (pemain yang main di multiple match)
+            const uniquePlayers = [];
+            const seenIds = new Set();
+            for (const player of allPlayers) {
+                if (!seenIds.has(player.id)) {
+                    seenIds.add(player.id);
+                    uniquePlayers.push(player);
                 }
             }
 
-            allPlayers.sort((a, b) => b.rating - a.rating);
-
-            const topPlayers = allPlayers.slice(0, parseInt(limit)).map((p, idx) => ({
+            const topPlayers = uniquePlayers.slice(0, parseInt(limit)).map((p, idx) => ({
                 rank: idx + 1,
                 id: p.id,
                 name: p.name,
                 photo: p.photo,
                 initial: (p.name || 'U')[0].toUpperCase(),
                 position: p.position,
+                team: p.team,
+                teamLogo: p.teamLogo,
                 rating: p.rating,
                 color: getRatingColor(p.rating),
                 stats: `${p.goals}G ${p.assists}A`,
                 goals: p.goals,
                 assists: p.assists,
+                league: p.league,
             }));
+
+            console.log(`✅ Returning ${topPlayers.length} top players from today's matches`);
+            console.log(`🌟 Top players: ${topPlayers.map(p => `${p.name} (${p.rating})`).join(', ')}`);
 
             return res.json({
                 success: true,
                 data: topPlayers,
-                source: 'finished_matches',
+                source: 'today_matches',
+                matchesProcessed: Math.min(finishedMatches.length, 10),
                 lastUpdated: new Date().toISOString()
             });
         }
 
-        // Format response from getTopPlayers
-        const topPlayers = result.data.map((p, idx) => ({
-            rank: idx + 1,
-            id: p.id,
-            name: p.name,
-            photo: p.photo,
-            initial: (p.name || 'U')[0].toUpperCase(),
-            position: translatePosition(p.position),
-            team: p.team,
-            teamLogo: p.teamLogo,
-            rating: p.rating,
-            color: getRatingColor(p.rating),
-            stats: `${p.goals}G ${p.assists}A`,
-            goals: p.goals,
-            assists: p.assists,
-            appearances: p.appearances,
-        }));
+        // FALLBACK: Kalau gak ada match selesai hari ini, pake statistik musim
+        console.log('⚠️ No finished matches today, falling back to season stats...');
 
-        console.log(`✅ Returning ${topPlayers.length} top players`);
+        const result = await apiFootball.getTopPlayers(parseInt(limit));
 
-        res.json({
+        if (result.success && result.data && result.data.length > 0) {
+            const topPlayers = result.data.map((p, idx) => ({
+                rank: idx + 1,
+                id: p.id,
+                name: p.name,
+                photo: p.photo,
+                initial: (p.name || 'U')[0].toUpperCase(),
+                position: translatePosition(p.position),
+                team: p.team,
+                teamLogo: p.teamLogo,
+                rating: p.rating,
+                color: getRatingColor(p.rating),
+                stats: `${p.goals}G ${p.assists}A`,
+                goals: p.goals,
+                assists: p.assists,
+                appearances: p.appearances,
+            }));
+
+            console.log(`✅ Returning ${topPlayers.length} top players from season stats`);
+
+            return res.json({
+                success: true,
+                data: topPlayers,
+                source: 'season_stats',
+                lastUpdated: new Date().toISOString()
+            });
+        }
+
+        // Gak ada data sama sekali
+        return res.json({
             success: true,
-            data: topPlayers,
-            source: 'top_leagues',
+            data: [],
+            message: 'Belum ada data rating pemain. Data tersedia setelah match selesai.',
             lastUpdated: new Date().toISOString()
         });
 
