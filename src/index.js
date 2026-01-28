@@ -15,6 +15,12 @@ const teamStatsRouter = require('./routes/teamStats');
 const accountRouter = require('./routes/account');
 const logoutRouter = require('./routes/logout');
 
+// Import Tennis
+const tennisRouter = require('./routes/tennis');
+
+
+
+
 // Import jobs
 const cronJobs = require('./jobs/cronJobs');
 
@@ -102,6 +108,7 @@ app.use('/api/teams/statistics', teamStatsRouter);
 app.use('/api/streaming', streamingRouter);
 app.use('/api/account', accountRouter);
 app.use('/api/logout', logoutRouter);
+app.use('/api/tennis', tennisRouter);
 
 // 404 handler
 app.use((req, res) => {
