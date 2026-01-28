@@ -18,6 +18,12 @@ const logoutRouter = require('./routes/logout');
 // Import Tennis
 const tennisRouter = require('./routes/tennis');
 
+// Import Basketball
+const basketballRoutes = require('./routes/basketball');
+
+
+
+
 
 
 
@@ -109,6 +115,7 @@ app.use('/api/streaming', streamingRouter);
 app.use('/api/account', accountRouter);
 app.use('/api/logout', logoutRouter);
 app.use('/api/tennis', tennisRouter);
+app.use('/api/basketball', basketballRoutes);
 
 // 404 handler
 app.use((req, res) => {
