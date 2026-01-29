@@ -24,7 +24,8 @@ const basketballRoutes = require('./routes/basketball');
 // Import Volleyball
 const volleyballRoutes = require('./routes/volleyball');
 
-
+// Import Baseball
+const baseballRoutes = require('./routes/baseball');
 
 
 
@@ -118,6 +119,7 @@ app.use('/api/logout', logoutRouter);
 app.use('/api/tennis', tennisRouter);
 app.use('/api/basketball', basketballRoutes);
 app.use('/api/volleyball', volleyballRoutes);
+app.use('/api/baseball', baseballRoutes);
 
 // 404 handler
 app.use((req, res) => {
