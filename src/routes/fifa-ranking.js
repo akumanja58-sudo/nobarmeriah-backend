@@ -46,11 +46,22 @@ router.get('/', async (req, res) => {
 
         const data = await response.json();
 
-        // Parse the response - Zyla returns array of rankings
+        // Parse the response - Zyla returns { date, ranking: [...] }
         let rankings = [];
+        let rankingData = null;
 
+        // Check different possible response formats
         if (Array.isArray(data)) {
-            rankings = data.map((item, index) => ({
+            rankingData = data;
+        } else if (data.ranking) {
+            // Zyla API format: { date: "...", ranking: [...] }
+            rankingData = data.ranking;
+        } else if (data.rankings) {
+            rankingData = data.rankings;
+        }
+
+        if (rankingData && Array.isArray(rankingData)) {
+            rankings = rankingData.map((item, index) => ({
                 rank: item.rank || index + 1,
                 team: item.name || item.team || item.country || 'Unknown',
                 points: parseFloat(item.points) || 0,
@@ -60,18 +71,9 @@ router.get('/', async (req, res) => {
                 confederation: item.confederation || '',
                 flag: item.flag || null
             }));
-        } else if (data.rankings) {
-            rankings = data.rankings.map((item, index) => ({
-                rank: item.rank || index + 1,
-                team: item.name || item.team || item.country || 'Unknown',
-                points: parseFloat(item.points) || 0,
-                previousPoints: parseFloat(item.previous_points) || 0,
-                previousRank: item.previous_rank || item.rank || index + 1,
-                change: (item.previous_rank || item.rank || index + 1) - (item.rank || index + 1),
-                confederation: item.confederation || '',
-                flag: item.flag || null
-            }));
         }
+
+        console.log(`📊 Parsed ${rankings.length} rankings from Zyla API`);
 
         // Update cache
         fifaRankingsCache = rankings;
@@ -153,7 +155,7 @@ router.get('/country/:country', async (req, res) => {
 
         // Search for country
         const countryLower = country.toLowerCase();
-        const found = fifaRankingsCache?.find(r => 
+        const found = fifaRankingsCache?.find(r =>
             r.team.toLowerCase() === countryLower ||
             r.team.toLowerCase().includes(countryLower)
         );
@@ -218,7 +220,7 @@ router.get('/confederation/:conf', async (req, res) => {
 
         // Filter by confederation
         const confUpper = conf.toUpperCase();
-        const filtered = fifaRankingsCache?.filter(r => 
+        const filtered = fifaRankingsCache?.filter(r =>
             r.confederation.toUpperCase() === confUpper
         ) || [];
 
