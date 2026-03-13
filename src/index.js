@@ -32,7 +32,8 @@ const baseballRoutes = require('./routes/baseball');
 // Import Formula 1
 const formula1Routes = require('./routes/formula1');
 
-
+// Import MMA
+const mmaRoutes = require('./routes/mma');
 
 
 
@@ -132,6 +133,7 @@ app.use('/api/basketball', basketballRoutes);
 app.use('/api/volleyball', volleyballRoutes);
 app.use('/api/baseball', baseballRoutes);
 app.use('/api/formula1', formula1Routes);
+app.use('/api/mma', mmaRoutes);
 
 // 404 handler
 app.use((req, res) => {
