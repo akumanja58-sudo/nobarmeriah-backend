@@ -54,14 +54,15 @@ router.get('/search', async (req, res) => {
 
         console.log('🔍 Searching YouTube highlights:', searchQuery);
 
-        // Search YouTube - hanya ambil 1 video paling relevan
+        // Search YouTube - hanya ambil video yang available di Indonesia
         const searchUrl = new URL(`${YOUTUBE_API_BASE}/search`);
         searchUrl.searchParams.append('part', 'snippet');
         searchUrl.searchParams.append('q', searchQuery);
         searchUrl.searchParams.append('type', 'video');
-        searchUrl.searchParams.append('maxResults', '3'); // Ambil 3, filter ke 1
+        searchUrl.searchParams.append('maxResults', '5'); // Ambil lebih banyak karena bisa ada yang geo-blocked
         searchUrl.searchParams.append('order', 'relevance');
         searchUrl.searchParams.append('videoDuration', 'medium'); // 4-20 menit
+        searchUrl.searchParams.append('regionCode', 'ID'); // Filter video available di Indonesia 🇮🇩
         searchUrl.searchParams.append('key', YOUTUBE_API_KEY);
 
         const response = await fetch(searchUrl.toString());
@@ -228,6 +229,7 @@ router.get('/trending', async (req, res) => {
         searchUrl.searchParams.append('order', 'date');
         searchUrl.searchParams.append('publishedAfter', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()); // Last 24 hours
         searchUrl.searchParams.append('videoDuration', 'medium');
+        searchUrl.searchParams.append('regionCode', 'ID'); // Filter video available di Indonesia 🇮🇩
         searchUrl.searchParams.append('key', YOUTUBE_API_KEY);
 
         const response = await fetch(searchUrl.toString());
