@@ -37,7 +37,7 @@ router.get('/search', async (req, res) => {
 
         // Generate cache key
         const cacheKey = `${home}-${away}-${date || 'nodate'}`;
-        
+
         // Check cache
         const cached = highlightsCache.get(cacheKey);
         if (cached && (Date.now() - cached.timestamp < CACHE_DURATION)) {
@@ -49,23 +49,23 @@ router.get('/search', async (req, res) => {
             });
         }
 
-        // Build search query
-        const searchQuery = `${home} vs ${away} highlights ${date ? new Date(date).getFullYear() : new Date().getFullYear()}`;
-        
+        // Build search query - lebih spesifik biar dapat video yang tepat
+        const searchQuery = `"${home}" vs "${away}" highlights ${date ? new Date(date).getFullYear() : new Date().getFullYear()}`;
+
         console.log('🔍 Searching YouTube highlights:', searchQuery);
 
-        // Search YouTube
+        // Search YouTube - hanya ambil 1 video paling relevan
         const searchUrl = new URL(`${YOUTUBE_API_BASE}/search`);
         searchUrl.searchParams.append('part', 'snippet');
         searchUrl.searchParams.append('q', searchQuery);
         searchUrl.searchParams.append('type', 'video');
-        searchUrl.searchParams.append('maxResults', '5');
+        searchUrl.searchParams.append('maxResults', '3'); // Ambil 3, filter ke 1
         searchUrl.searchParams.append('order', 'relevance');
         searchUrl.searchParams.append('videoDuration', 'medium'); // 4-20 menit
         searchUrl.searchParams.append('key', YOUTUBE_API_KEY);
 
         const response = await fetch(searchUrl.toString());
-        
+
         if (!response.ok) {
             const errorData = await response.json();
             console.error('❌ YouTube API error:', errorData);
@@ -75,7 +75,7 @@ router.get('/search', async (req, res) => {
         const data = await response.json();
 
         // Parse results
-        const highlights = (data.items || []).map(item => ({
+        let highlights = (data.items || []).map(item => ({
             videoId: item.id.videoId,
             title: item.snippet.title,
             description: item.snippet.description,
@@ -88,6 +88,21 @@ router.get('/search', async (req, res) => {
             isTrustedChannel: TRUSTED_CHANNELS.includes(item.snippet.channelId)
         }));
 
+        // Filter: hanya ambil video yang title-nya mengandung nama kedua tim
+        const homeLower = home.toLowerCase().replace(/\s*(w|women|fc|cf)$/i, '').trim();
+        const awayLower = away.toLowerCase().replace(/\s*(w|women|fc|cf)$/i, '').trim();
+
+        const filteredHighlights = highlights.filter(video => {
+            const titleLower = video.title.toLowerCase();
+            // Cek apakah title mengandung kedua nama tim (atau sebagian)
+            const hasHome = titleLower.includes(homeLower) || homeLower.split(' ').some(word => word.length > 3 && titleLower.includes(word));
+            const hasAway = titleLower.includes(awayLower) || awayLower.split(' ').some(word => word.length > 3 && titleLower.includes(word));
+            return hasHome && hasAway;
+        });
+
+        // Gunakan filtered results jika ada, kalau tidak pakai original
+        highlights = filteredHighlights.length > 0 ? filteredHighlights : highlights;
+
         // Sort: trusted channels first
         highlights.sort((a, b) => {
             if (a.isTrustedChannel && !b.isTrustedChannel) return -1;
@@ -95,20 +110,23 @@ router.get('/search', async (req, res) => {
             return 0;
         });
 
-        // Save to cache
+        // AMBIL HANYA 1 VIDEO TERBAIK
+        const bestHighlight = highlights.length > 0 ? [highlights[0]] : [];
+
+        // Save to cache (simpan 1 video aja)
         highlightsCache.set(cacheKey, {
             timestamp: Date.now(),
-            data: highlights
+            data: bestHighlight
         });
 
-        console.log(`✅ Found ${highlights.length} highlights for: ${home} vs ${away}`);
+        console.log(`✅ Found best highlight for: ${home} vs ${away}`);
 
         res.json({
             success: true,
             source: 'api',
             query: searchQuery,
-            data: highlights,
-            total: highlights.length
+            data: bestHighlight,
+            total: bestHighlight.length
         });
 
     } catch (error) {
@@ -141,7 +159,7 @@ router.get('/video/:videoId', async (req, res) => {
         videoUrl.searchParams.append('key', YOUTUBE_API_KEY);
 
         const response = await fetch(videoUrl.toString());
-        
+
         if (!response.ok) {
             throw new Error('Failed to fetch video details');
         }
@@ -156,7 +174,7 @@ router.get('/video/:videoId', async (req, res) => {
         }
 
         const video = data.items[0];
-        
+
         res.json({
             success: true,
             data: {
@@ -213,7 +231,7 @@ router.get('/trending', async (req, res) => {
         searchUrl.searchParams.append('key', YOUTUBE_API_KEY);
 
         const response = await fetch(searchUrl.toString());
-        
+
         if (!response.ok) {
             throw new Error('Failed to fetch trending highlights');
         }
