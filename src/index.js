@@ -16,6 +16,7 @@ const teamStatsRouter = require('./routes/teamStats');
 const accountRouter = require('./routes/account');
 const logoutRouter = require('./routes/logout');
 const searchRoutes = require('./routes/search');
+const highlightsRoutes = require('./routes/highlights');
 
 // Import Tennis
 const tennisRouter = require('./routes/tennis');
@@ -128,6 +129,7 @@ app.use('/api/streaming', streamingRouter);
 app.use('/api/account', accountRouter);
 app.use('/api/logout', logoutRouter);
 app.use('/api/search', searchRoutes);
+app.use('/api/highlights', highlightsRoutes);
 app.use('/api/tennis', tennisRouter);
 app.use('/api/basketball', basketballRoutes);
 app.use('/api/volleyball', volleyballRoutes);
